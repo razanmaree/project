@@ -30,6 +30,8 @@ num_links = 5
 link_length = 1 
 LIGHT_GRAY = rgb_to_color([210,210,210])  
 DARK_GRAY = rgb_to_color([140,160,160])  
+RED = rgb_to_color([1, 0, 0])  
+IK_target = [1, 1, 0]
 
 
 def Rot(angle, axis):
@@ -77,13 +79,14 @@ class SimpleArm:
 
         self.Jw = np.zeros((self.n+1, 3)) # joint positions in world coordinates
 
-        self.joint_shapes = []  # List to hold multiple shapes (rectangles or circles)
-        self.link_shapes = []  # New list to hold link shapes
+        self.joint_shapes = []  # List to hold multiple shapes 
+        self.link_shapes = []  # list to hold link shapes
 
         self.FK()
 
         #initial shape position
         self.update_shape_positions()  
+
 
     def initialize_joint_positions(self):
         if self.alignment_axis == 'y':
@@ -143,12 +146,92 @@ class SimpleArm:
 
         self.update_shape_positions()  # Update the shape positions along with links and joints
 
-        # Update child arms
+        #Update child arms
         for child_arm in self.child_arms:
-            # Ensure the child's offset is correctly applied based on the parent joint
+            #Ensure the child's offset is correctly applied based on the parent joint
             child_arm.offset = self.Jw[child_arm.parent_joint] + child_arm.initial_offset
             child_arm.FK(apply_initial_offset=False)  # Apply the FK to the child arms recursively
 
+        return self.Jw[-1, :] 
+
+
+
+
+    def inverse_kinematics_Gauss_Newton(self, target_position, tolerance=0.01, max_iterations=100, damping=0.01):
+
+        target_position = np.array(target_position)
+        
+        for iteration in range(max_iterations):
+            end_effector_position = self.Jw[-1]  # Current end-effector position
+            
+            # Check if the end effector is within the tolerance
+            error = target_position - end_effector_position
+            if np.linalg.norm(error) < tolerance:
+                print(f"Reached target in {iteration} iterations!")
+                return
+            
+            # Compute the Jacobian matrix
+            J = self.compute_jacobian()
+            
+            # Gauss-Newton step (with Levenberg-Marquardt damping)
+            JTJ = J.T @ J
+            delta_theta = np.linalg.solve(JTJ + damping * np.eye(JTJ.shape[0]), J.T @ error)
+            
+            # Update joint angles
+            self.angles += delta_theta
+            
+            # Update forward kinematics
+            self.FK(apply_initial_offset=False)
+        
+        print(f"Reached max iterations without fully reaching target. Final error: {np.linalg.norm(target_position - self.Jw[-1])}")
+
+
+    def inverse_kinematics_Gradient_Descent(self, target_position, learning_rate=0.01, tolerance=0.01, max_iterations=1000):
+
+        target_position = np.array(target_position)
+        
+        for iteration in range(max_iterations):
+            end_effector_position = self.Jw[-1]  # Current end-effector position
+            
+            # Check if the end effector is within the tolerance
+            error = target_position - end_effector_position
+            if np.linalg.norm(error) < tolerance:
+                print(f"Reached target in {iteration} iterations!")
+                return
+            
+            # Compute the Jacobian matrix
+            J = self.compute_jacobian()
+            
+            # Compute the gradient
+            gradient = J.T @ error
+            
+            # Update joint angles using gradient descent
+            self.angles += learning_rate * gradient
+            
+            # Update forward kinematics
+            self.FK(apply_initial_offset=False)
+        
+        print(f"Reached max iterations without fully reaching target. Final error: {np.linalg.norm(target_position - self.Jw[-1])}")
+
+
+    def compute_jacobian(self):
+
+        J = np.zeros((3, self.n))
+        
+        for i in range(self.n):
+            # Compute the axis of rotation for this joint
+            if i == 0:
+                axis = np.array([0, 0, 1])  # Assuming rotation around z-axis for the base joint
+            else:
+                axis = np.array([0, 0, 1])  # For 2D case, all joints rotate around z-axis
+            
+            # Compute the vector from this joint to the end effector
+            r = self.Jw[-1] - self.Jw[i]
+            
+            # Compute the column of the Jacobian
+            J[:, i] = np.cross(axis, r)
+        
+        return J
 
 
     def draw(self):
@@ -213,25 +296,25 @@ class SimpleArm:
         child_arm.child_connection_point = child_connection_point
         self.child_arms.append(child_arm)   
 
- 
-RED = rgb_to_color([1, 0, 0])  
+
+
 
 arms = [
-    SimpleArm(n=4, link_lengths=[1, 1, 1, 0.5], offset=np.array([0, 3, 0]), alignment_axis='y')
+    SimpleArm(n=4, link_lengths=[1, 1, 1, 0.5], offset=np.array([0, 0, 0]), alignment_axis='y')
 ]
 
 
 
-child_arm0 = SimpleArm(n=3, link_lengths=[1, 1, 1], offset=np.array([0, 0, 0]), alignment_axis='x' ,
-                                                      link_colors=[DARK_GRAY, LIGHT_GRAY, LIGHT_GRAY])
-child_arm1 = SimpleArm(n=3, link_lengths=[1, 1, 1], offset=np.array([0, 0, 0]), alignment_axis='x' ,
-                                                      link_colors=[DARK_GRAY, LIGHT_GRAY, LIGHT_GRAY])
+child_arm0 = SimpleArm(n=2, link_lengths=[1, 1], offset=np.array([-1, 0, 0]), alignment_axis='x' ,       
+                                                      link_colors=[LIGHT_GRAY, LIGHT_GRAY])  #left hand
+child_arm1 = SimpleArm(n=2, link_lengths=[1, 1], offset=np.array([1, 0, 0]), alignment_axis='x' ,          
+                                                      link_colors=[LIGHT_GRAY, LIGHT_GRAY])  #right hand
 
 
-child_arm2 = SimpleArm(n=3, link_lengths=[1, 1, 1], offset=np.array([0.7, 0.2, 0]), alignment_axis='y', 
-                                                      link_colors=[DARK_GRAY, LIGHT_GRAY, LIGHT_GRAY])
-child_arm3 = SimpleArm(n=3, link_lengths=[1, 1, 1], offset=np.array([-0.7, 0.2, 0]), alignment_axis='y',   
-                                                      link_colors=[DARK_GRAY, LIGHT_GRAY, LIGHT_GRAY])
+child_arm2 = SimpleArm(n=2, link_lengths=[1, 1], offset=np.array([0.7, -0.75, 0]), alignment_axis='y', 
+                                                      link_colors=[LIGHT_GRAY, LIGHT_GRAY])  #right leg
+child_arm3 = SimpleArm(n=2, link_lengths=[1, 1], offset=np.array([-0.7, -0.75, 0]), alignment_axis='y',   
+                                                      link_colors=[LIGHT_GRAY, LIGHT_GRAY])  #left leg
 
 arms[0].add_child_arm(child_arm0, 2,3)
 arms[0].add_child_arm(child_arm1, 2,3)
@@ -480,79 +563,61 @@ for arm, shapes in zip(all_arms, arm_shapes):
 
 
 
+
+#added
 def draw_all_arms():
     vd_assembly = vd.Assembly()
-    # Only draw the parent arm, which will automatically draw its child arms
-    for arm in [arms[0]]:  
-        arm.FK()  # Ensure joint positions are up to date
-        arm.update_shape_positions()  # Update shape positions
-        vd_assembly += arm.draw()
+    # Draw the parent arm and all its child arms
+    arms[0].FK()  # Ensure joint positions are up to date for the main arm
+    arms[0].update_shape_positions()  # Update shape positions for the main arm
+    vd_assembly += arms[0].draw()
+    
+    # Explicitly draw all child arms
+    #for child_arm in [child_arm0, child_arm1, child_arm2, child_arm3]:
+    for child_arm in [arms[0]]:
+
+        child_arm.FK()  # Ensure joint positions are up to date
+        child_arm.update_shape_positions()  # Update shape positions
+        vd_assembly += child_arm.draw()
+    
     return vd_assembly
+#Added
 
 
-IK_target = [1, 1, 0]
 
 
-
-def wave(arm,arm0):
+def wave(arm,arm0):   
 
     # Play the laughing sound
     play_sound('sound/hello1.wav')
 
-    n = 3   # this is the number of the joint
+    n = 2   # this is the number of the joint
     t = 0.2 # this is the sleep time
-    original_angle = arm.angles[n-1]  # Store the original angle of the fifth joint (index 4)
+    original_angle = arm.angles[n-1]  # Store the original angle 
 
     original_angles = arm0.angles.copy()
     arm0.angles[3] = original_angles[3] -  np.radians(20) 
 
-
     arm.angles[n-2] = original_angle + np.radians(60)
-    arm.FK()  # Update forward kinematics
-    plt.remove("Assembly")
-    plt.add(draw_all_arms())  # Redraw all arms
-    plt.render()
-    time.sleep(t)  # Pause for half a second
-
+    time.sleep(t)  
 
     for _ in range(3):  # Repeat 3 times
-        # Move up 45 degrees
-        arm.angles[n-1] = original_angle + np.radians(45)
-        arm.FK()  # Update forward kinematics
-        plt.remove("Assembly")
-        plt.add(draw_all_arms())  # Redraw all arms
-        plt.render()
-        time.sleep(t)  # Pause for half a second
+        move_to_point(child_arm1, [ 1.73981932e+00 , 3.81695055e+00 ,-4.11406165e-06],"Gauss-Newton") 
+        time.sleep(t)  
         
-        arm.angles[n-1] = original_angle - np.radians(0)
-        arm.FK()  # Update forward kinematics
-        plt.remove("Assembly")
-        plt.add(draw_all_arms())  # Redraw all arms
-        plt.render()
-        time.sleep(t)  # Pause for half a second
-
+        move_to_point(child_arm1, [ 2.71033078e+00 , 2.96479414e+00, -4.11406165e-06],"Gauss-Newton") 
+        time.sleep(t)  
 
     # Return HEAD to the original position
     arm0.angles[3] = original_angles[3] -  np.radians(0) 
     arm0.FK()  # Update forward kinematics
-    plt.remove("Assembly")
-    plt.add(draw_all_arms())  # Redraw all arms
-    plt.render()
-
 
     # Return to the original position
-    arm.angles[n-1] = original_angle
+    arm.angles[n-1] = arm.angles[n-2] = arm.angles[n-3] = original_angle
     arm.FK()  
     plt.remove("Assembly")
     plt.add(draw_all_arms())  
     plt.render()
-
-    arm.angles[n-2] = original_angle + np.radians(0)
-    arm.FK()  
-    plt.remove("Assembly")
-    plt.add(draw_all_arms())  
-    plt.render()
-    time.sleep(t)  
 
 
 
@@ -631,12 +696,10 @@ def cry(arm):
     # Change the mouth to a frown
     change_mouth_shape(arm, 'frown')
 
-    child_arm0.angles[1] = np.radians(-60)
-    child_arm0.angles[2] = np.radians(-80)
-    child_arm0.FK()
-    child_arm1.angles[1] = np.radians(60)
-    child_arm1.angles[2] = np.radians(80)
-    child_arm1.FK()
+
+    #IK
+    move_to_point(child_arm0, [ -5.91775278e-01 , 3.61574695e+00 ,-4.11406165e-06],"Gradient-Descent") 
+    move_to_point(child_arm1, [ 5.91775278e-01 , 3.61574695e+00, -4.11406165e-06],"Gradient-Descent") 
 
     # Close eyes and change inner eye color to black
     eye_indices = [4, 5]  # Outer eyes
@@ -652,7 +715,7 @@ def cry(arm):
     # Play the crying sound here
     play_sound('sound/crying1.wav')
     
-    # Mouth position (assuming it's the 10th shape)
+    # Mouth position 
     end_y = arm.joint_shapes[9][0].pos()[1] - 0.5  # Lowered the end position
     
     # Animate tears falling
@@ -705,25 +768,23 @@ def angry(arm):
     # Play the screaming sound
     play_sound('sound/scream3.wav') 
     
-    # Make the eyebrows more angled (correct indices are 8 and 9)
+    # Make the eyebrows more angled 
     left_eyebrow_index = 8
     right_eyebrow_index = 9
 
     arm.joint_shapes[left_eyebrow_index][0].rotate(np.radians(800), axis=(0,0,1), point=arm.joint_shapes[left_eyebrow_index][0].pos())
     arm.joint_shapes[right_eyebrow_index][0].rotate(np.radians(-800), axis=(0,0,1), point=arm.joint_shapes[right_eyebrow_index][0].pos())
 
-    # Modify arm angles for the angry motion
-    child_arm0.angles[1] = child0_original_angles[1] + np.radians(45)
-    child_arm1.angles[1] = child1_original_angles[1] + np.radians(-45)
 
-    child_arm0.angles[2] = child0_original_angles[2] + np.radians(90)
-    child_arm1.angles[2] = child1_original_angles[2] + np.radians(-90)
+    #IK
+    move_to_point(child_arm0, [ -9.70511457e-01 , 6.68706065e-01 ,-4.11406165e-06],"Gradient-Descent") 
+    move_to_point(child_arm1, [ 9.70511457e-01 , 6.68706065e-01 ,-4.11406165e-06],"Gradient-Descent") 
 
-    # Narrow the eyes (assuming eyes are shapes 4-7)
+    # Narrow the eyes 
     for i in range(4, 8):
         arm.joint_shapes[i][0].scale([1, 0.5, 1])
     
-    # Change mouth to a broken line to show anger
+    # Change mouth to show anger
     change_mouth_shape(arm, 'angry')
 
     # Redraw to display the angry state
@@ -731,7 +792,7 @@ def angry(arm):
     plt.add(draw_all_arms())
     plt.render()
 
-    # Hold the angry expression for 2 seconds
+    # Hold the angry expression for 3 seconds
     time.sleep(3)
 
     # Reset to the original state (face, arms, angles, etc.)
@@ -774,7 +835,7 @@ def laughing(arm):
         arm.joint_shapes[i] = (manim_to_vedo(raised_eyebrow), 4, 0, False, 
                                 (0.3 if i == 8 else -0.3, 0.5, 0))  # Moved up slightly
 
-    for _ in range(8):  # Repeat the animation 6 times
+    for _ in range(8):  # Repeat the animation 8 times
 
         if _%2==0:
             mouth_width = 0.6
@@ -786,14 +847,14 @@ def laughing(arm):
             arm.joint_shapes[11] = (manim_to_vedo(laughing_mouth), 4, 0, False, (0, -0.3, 0))
         
         # Add hand clapping motion
-        child_arm0.angles[1] = np.radians(45 * np.sin(_))
+        child_arm0.angles[0] = np.radians(45 * np.sin(_)-180)
         child_arm0.FK()
-        child_arm1.angles[1] = np.radians(-45 * np.sin(_))
+        child_arm1.angles[0] = np.radians(-45 * np.sin(_))
         child_arm1.FK()
 
         # Add leg movement to simulate balancing
-        child_arm2.angles[1] = np.radians(10 * np.sin(_))
-        child_arm3.angles[1] = np.radians(-10 * np.sin(_))
+        child_arm2.angles[0] = np.radians(10 * np.sin(_)-180)
+        child_arm3.angles[0] = np.radians(-10 * np.sin(_)-180)
         child_arm2.FK()
         child_arm3.FK()
 
@@ -845,12 +906,8 @@ def surprised(arm):
     original_arm1_angles = child_arm1.angles.copy()
 
 
-    child_arm0.angles[1] = np.radians(-80)
-    child_arm0.angles[2] = np.radians(-85)
-    child_arm0.FK()
-    child_arm1.angles[1] = np.radians(80)
-    child_arm1.angles[2] = np.radians(85)
-    child_arm1.FK()
+    move_to_point(child_arm0, [ -4.37913706e-01 , 3.28435280e+00, -4.11406165e-06],"Gradient-Descent") 
+    move_to_point(child_arm1,  [ 4.37913706e-01 , 3.28435280e+00, -4.11406165e-06],"Gradient-Descent")
 
     for i in range(8, 10):
         # Create a new, more curved eyebrow
@@ -904,10 +961,9 @@ def yawning(arm):
     original_arm0_angles = child_arm0.angles.copy()
     original_arm1_angles = child_arm1.angles.copy()
 
+    #IK
+    move_to_point(child_arm1, [ 4.37913706e-01 , 3.28435280e+00, -4.11406165e-06],"Gradient-Descent")  
 
-    child_arm1.angles[1] = np.radians(80)
-    child_arm1.angles[2] = np.radians(85)
-    child_arm1.FK()
 
     # Yawning animation
     for i in range(9):  # 10 frames of animation
@@ -932,8 +988,6 @@ def yawning(arm):
 
     # Hold the peak yawn position
     time.sleep(1)
-
-
 
     play_sound('sound/yawning1.wav')  
 
@@ -966,7 +1020,6 @@ def yawning(arm):
 
     # Reset face
     reset_face(arm)
-
 
 
 
@@ -1049,7 +1102,7 @@ def shake_head(arm, angle_right, angle_left):
 
 
 
-def jump(arm, height=1.0, duration=1.0, n=4):
+def jump(arm, height=1.0, duration=1.0, n=4):      
 
     # Store the initial offsets and angles
     initial_offset = arm.offset.copy()  # Store the initial offset of the body
@@ -1080,10 +1133,10 @@ def jump(arm, height=1.0, duration=1.0, n=4):
 
         # Update the vertical position of the body and legs
         arm.offset[1] = initial_offset[1] + height * y_offset
-        child_arm2.offset[1] = initial_leg1_offset[1] + height * y_offset
-        child_arm3.offset[1] = initial_leg2_offset[1] + height * y_offset
-        child_arm1.offset[1] = initial_child1_offset[1] + height * y_offset
-        child_arm0.offset[1] = initial_child0_offset[1] + height * y_offset
+        child_arm2.offset[0] = initial_leg1_offset[0] + height * y_offset
+        child_arm3.offset[0] = initial_leg2_offset[0] + height * y_offset
+        child_arm1.offset[0] = initial_child1_offset[0] + height * y_offset
+        child_arm0.offset[0] = initial_child0_offset[0] + height * y_offset
 
         #Modify facial expressions based on jump height
         if y_offset > 0.5:
@@ -1101,15 +1154,15 @@ def jump(arm, height=1.0, duration=1.0, n=4):
 
 
             # Bend legs inward
-            child_arm2.angles[1] = np.radians(30)  # Bend the left leg inward
-            child_arm3.angles[1] = np.radians(-30)  # Bend the right leg inward
+            child_arm2.angles[0] = np.radians(210)  # Bend the left leg inward
+            child_arm3.angles[0] = np.radians(150)  # Bend the right leg inward
             child_arm2.FK()  # Update the forward kinematics for the left leg
             child_arm3.FK()  # Update the forward kinematics for the right leg
 
             # Rotate arms upward
-            child_arm0.angles[1] = np.radians(-45)
+            child_arm0.angles[0] = np.radians(135)
             child_arm0.FK()  # Update the forward kinematics to apply the rotation
-            child_arm1.angles[1] = np.radians(45)
+            child_arm1.angles[0] = np.radians(45)
             child_arm1.FK()  # Update the forward kinematics to apply the rotation
         else:
             # Reset facial expressions to normal
@@ -1121,15 +1174,15 @@ def jump(arm, height=1.0, duration=1.0, n=4):
             arm.joint_shapes[11] = (manim_to_vedo(laughing_mouth), 4, 0, False, (0, -0.3, 0))
 
             # Straighten legs as the robot descends
-            child_arm2.angles[1] = np.radians(0)  # Straighten the left leg
-            child_arm3.angles[1] = np.radians(0)  # Straighten the right leg
+            child_arm2.angles[0] = np.radians(180)  # Straighten the left leg
+            child_arm3.angles[0] = np.radians(180)  # Straighten the right leg
             child_arm2.FK()  
             child_arm3.FK() 
 
             # Rotate arms back to original position
-            child_arm0.angles[1] = np.radians(0)
+            child_arm0.angles[0] = np.radians(180)
             child_arm0.FK()  
-            child_arm1.angles[1] = np.radians(0)
+            child_arm1.angles[0] = np.radians(0)
             child_arm1.FK() 
 
         # Recalculate forward kinematics for all parts of the body and legs
@@ -1205,8 +1258,8 @@ def dance(arm, duration=5.0, cycles=3):
     child3_original_angles = child_arm3.angles.copy()  # Right leg
 
 
-    child_arm2.angles[2] = child2_original_angles[2] - np.radians(30) # Left leg squeezing inward/outward
-    child_arm3.angles[2] = child3_original_angles[2] + np.radians(30) # Left leg squeezing inward/outward
+    child_arm2.angles[1] = child2_original_angles[1] - np.radians(30) # Left leg squeezing inward/outward
+    child_arm3.angles[1] = child3_original_angles[1] + np.radians(30) # Left leg squeezing inward/outward
 
     
     # Dance animation: raising and lowering hands + squeezing legs
@@ -1228,16 +1281,16 @@ def dance(arm, duration=5.0, cycles=3):
         arm.angles[3] = original_angles[3] +  raise_angle 
 
         # Move the arms (child_arm0 and child_arm1) up and down
-        child_arm0.angles[1] = child0_original_angles[1] + raise_angle  # Lift left arm
-        child_arm0.angles[2] = child0_original_angles[2] + raise_angle + np.radians(30)  # Rotate second joint
+        child_arm0.angles[0] = child0_original_angles[0] + raise_angle  # Lift left arm
+        child_arm0.angles[1] = child0_original_angles[1] + raise_angle + np.radians(30)  # Rotate second joint
 
-        child_arm1.angles[1] = child1_original_angles[1] + raise_angle  # Lift right arm
-        child_arm1.angles[2] = child1_original_angles[2] + raise_angle + np.radians(30)  # Rotate second joint
+        child_arm1.angles[0] = child1_original_angles[0] + raise_angle  # Lift right arm
+        child_arm1.angles[1] = child1_original_angles[1] + raise_angle + np.radians(30)  # Rotate second joint
 
         # Move the legs (child_arm2 and child_arm3) inward and outward to simulate squeezing
-        child_arm2.angles[1] = child2_original_angles[1] + squeeze_angle  # Left leg squeezing inward/outward
+        child_arm2.angles[0] = child2_original_angles[0] + squeeze_angle  # Left leg squeezing inward/outward
 
-        child_arm3.angles[1] = child3_original_angles[1] - squeeze_angle  # Right leg squeezing inward/outward
+        child_arm3.angles[0] = child3_original_angles[0] - squeeze_angle  # Right leg squeezing inward/outward
 
 
         # Update forward kinematics for all parts
@@ -1279,7 +1332,6 @@ def dance(arm, duration=5.0, cycles=3):
     plt.remove("Assembly")
     plt.add(draw_all_arms())
     plt.render()
-
 
 
 
@@ -1385,10 +1437,10 @@ def love(arm, duration=5.0):
     
     # Define custom initial positions for the hearts
     initial_positions = [
-        [-0.8, 6.0, 0],  # Left side, higher
-        [0, 7.0, 0],     # Center, even higher
-        [0.8, 6.5, 0],    # Right side, higher
-        [0.6, 5.8, 0]    # Right side, higher
+        [-0.8, 3.0, 0],  # Left side, higher
+        [0, 4.0, 0],     # Center, even higher
+        [0.8, 3.5, 0],    # Right side, higher
+        [0.6, 2.8, 0]    # Right side, higher
     ]
     
     for heart, pos in zip(floating_hearts, initial_positions):
@@ -1441,6 +1493,61 @@ def love(arm, duration=5.0):
     plt.add(draw_all_arms())
     plt.render()
 
+#============================================================================
+
+
+def move_to_point(arm, target_point,currentMode, iterations=1000):
+
+    IK_target = target_point
+
+    for iteration in range(iterations):
+
+        if currentMode == "Gradient-Descent":
+            arm.inverse_kinematics_Gradient_Descent(IK_target)
+        elif currentMode == "Gauss-Newton":
+            arm.inverse_kinematics_Gauss_Newton(IK_target)
+        else:
+            print("Invalid currentMode. No action taken.")
+            return  # do nothing
+            
+        # Update the entire robot
+        plt.remove("Assembly")
+        plt.add(draw_all_arms())
+        plt.render()
+
+        distance = np.linalg.norm(arm.Jw[-1] - IK_target)
+        if distance < 1e-2:
+            break
+
+
+def LeftButtonPress(evt, iterations=1000):
+    
+    currentMode = "Gradient-Descent"
+    IK_target = evt.picked3d
+    
+    if IK_target is None:
+        print("No 3D point was picked. Please try again.")
+        return
+    
+    plt.remove("Sphere")
+    plt.add(vd.Sphere(pos=IK_target, r=0.05, c='b'))
+    
+    for iteration in range(iterations):
+        if currentMode == "Gradient-Descent":
+            child_arm1.inverse_kinematics_Gradient_Descent(IK_target)
+        elif currentMode == "Gauss-Newton":
+            child_arm1.inverse_kinematics_Gauss_Newton(IK_target)
+        else:
+            print("Invalid currentMode. No action taken.")
+            return
+        
+        plt.remove("Assembly")
+        plt.add(draw_all_arms())
+        plt.render()
+        
+        distance = np.linalg.norm(child_arm1.Jw[-1] - IK_target)
+        if distance < 1e-2:
+            break
 
 
 
@@ -1448,45 +1555,51 @@ def love(arm, duration=5.0):
 def onKeyPress(evt):
     reset_face(arms[0])
 
-    if evt.keypress == 'i':
+    if evt.keypress in ['i','I']:
         wave(child_arm1,arms[0]) 
-    elif evt.keypress == 'b':
+    elif evt.keypress in ['b','B']:
         blink(arms[0], [4, 5, 6, 7])  
-    elif evt.keypress == 'h':
+    elif evt.keypress in ['h','H']:
         laughing(arms[0])
-    elif evt.keypress == 'c':
+    elif evt.keypress in ['c','C']:
         cry(arms[0])  
-    elif evt.keypress == 'a':
+    elif evt.keypress in ['a','A']:
         angry(arms[0])  
-    elif evt.keypress == 's':  
+    elif evt.keypress in ['s','S']:  
         surprised(arms[0])
-    elif evt.keypress == 'n':  
+    elif evt.keypress in ['n','N']:  
         yawning(arms[0])
-    elif evt.keypress == 'j':  
+    elif evt.keypress in ['j','J']:  
         jump(arms[0], height=1.5, duration=1.0)
-    elif evt.keypress == 'd': 
+    elif evt.keypress in ['d','D']: 
         dance(arms[0], duration=5.0, cycles=2) 
-    elif evt.keypress == 'g':
+    elif evt.keypress in ['g','G']:
         stick_tongue_out(arms[0])   
-    elif evt.keypress == 'v':  
+    elif evt.keypress in ['v','V']:  
         love(arms[0], duration=5.0)
+    elif evt.keypress in ['1']:
+        move_to_point(child_arm1, [2.6, 1.3, 0],"Gradient-Descent") 
+    elif evt.keypress in ['2']:
+        move_to_point(child_arm1,[-1, 2, 0],"Gauss-Newton")
 
 
 
 
-
+# %% Initialize plotter and add elements
 plt = vd.Plotter()
 plt += draw_all_arms()
 
-
+plt += vd.Sphere(pos = IK_target, r=0.05, c='b').draggable(True)
+plane = vd.Plane(s=[10,10]) 
+plt.add(plane)
 
 plt.remove("Assembly")
 plt.add(draw_all_arms())
 plt.render()
 
+plt.add_callback('LeftButtonPress', LeftButtonPress)
 
 plt.add_callback('KeyPress', onKeyPress)
 plt.user_mode('2d').show(zoom="tightest")
 
 plt.close()
-
